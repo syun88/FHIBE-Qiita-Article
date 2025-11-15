@@ -30,23 +30,46 @@ DEFAULT_FOCUS_DIRS = [
 @dataclass(frozen=True)
 class AttributeField:
     column: str
-    title: str
+    title_en: str
+    title_ja: str
     treat_as_list: bool = False
+
+    @property
+    def title_bilingual(self) -> str:
+        return f"{self.title_en} / {self.title_ja}"
+
+
+def bilingual(en: str, ja: str) -> str:
+    """英語と日本語を同時に表示するためのヘルパー。"""
+    return f"{en} / {ja}"
+
+
+def format_pct(count: int, total: int) -> str:
+    """割合を0.1%精度で返す。"""
+    if total <= 0:
+        return "0.0%"
+    return f"{(count / total) * 100:.1f}%"
 
 
 ATTRIBUTE_FIELDS: Sequence[AttributeField] = (
-    AttributeField("pronoun", "Self-identified pronoun(s)", True),
-    AttributeField("ancestry", "Ancestry bucket(s)", True),
-    AttributeField("natural_skin_color", "Natural skin color palette"),
-    AttributeField("apparent_skin_color", "Perceived skin color palette"),
-    AttributeField("hairstyle", "Hair style category"),
-    AttributeField("natural_hair_type", "Natural hair type"),
-    AttributeField("apparent_hair_type", "Perceived hair type"),
-    AttributeField("natural_hair_color", "Natural hair color(s)", True),
-    AttributeField("apparent_hair_color", "Perceived hair color(s)", True),
-    AttributeField("facial_hairstyle", "Facial hairstyle(s)", True),
-    AttributeField("natural_facial_haircolor", "Natural facial hair color(s)", True),
-    AttributeField("apparent_facial_haircolor", "Perceived facial hair color(s)", True),
+    AttributeField("pronoun", "Self-identified pronoun(s)", "自己申告の代名詞", True),
+    AttributeField("ancestry", "Ancestry bucket(s)", "祖先カテゴリ", True),
+    AttributeField("natural_skin_color", "Natural skin color palette", "自然肌色パレット"),
+    AttributeField(
+        "apparent_skin_color", "Perceived skin color palette", "見た目肌色パレット"
+    ),
+    AttributeField("hairstyle", "Hair style category", "ヘアスタイル区分"),
+    AttributeField("natural_hair_type", "Natural hair type", "自然な髪質"),
+    AttributeField("apparent_hair_type", "Perceived hair type", "見た目の髪質"),
+    AttributeField("natural_hair_color", "Natural hair color(s)", "自然な髪色", True),
+    AttributeField("apparent_hair_color", "Perceived hair color(s)", "見た目の髪色", True),
+    AttributeField("facial_hairstyle", "Facial hairstyle(s)", "顔周りの毛スタイル", True),
+    AttributeField(
+        "natural_facial_haircolor", "Natural facial hair color(s)", "自然な顔毛の色", True
+    ),
+    AttributeField(
+        "apparent_facial_haircolor", "Perceived facial hair color(s)", "見た目の顔毛の色", True
+    ),
 )
 
 csv.field_size_limit(min(sys.maxsize, 2_147_483_647))
@@ -316,29 +339,36 @@ def summarize_annotator_table(csv_path: Path) -> dict:
 
 def render_directory_summary(dir_summaries: Iterable[dict]) -> None:
     """ディレクトリ構成をMarkdown形式で出力する。"""
-    print("## Directory overview")
+    print("## " + bilingual("Directory overview", "ディレクトリ概要"))
     for summary in dir_summaries:
+        print(f"- {summary['path']}")
         print(
-            f"- {summary['path']}: {summary['dirs']} dirs / {summary['files']} files"
+            f"  - {bilingual('Counts', '件数')}: {summary['dirs']} dirs / {summary['files']} files"
         )
         if summary["sample_dirs"]:
-            print(f"  - sample dirs: {', '.join(summary['sample_dirs'])}")
+            print(
+                f"  - {bilingual('Sample dirs', '代表ディレクトリ')}: "
+                + ", ".join(summary["sample_dirs"])
+            )
         if summary["sample_files"]:
-            print(f"  - sample files: {', '.join(summary['sample_files'])}")
+            print(
+                f"  - {bilingual('Sample files', '代表ファイル')}: "
+                + ", ".join(summary["sample_files"])
+            )
 
 
 def render_metadata_summary(summary: dict, top_n: int) -> None:
     """データセット全体の統計・属性別分布をMarkdownで出力する。"""
-    print("\n## Metadata (fhibe_downsampled.csv)")
-    print(f"- Images (rows): {summary['records']:,}")
-    print(f"- Unique subjects: {summary['subjects']:,}")
-    print(f"- Primary hero shots: {summary['primary_count']:,}")
+    print("\n## " + bilingual("Metadata (fhibe_downsampled.csv)", "メタデータ概要"))
+    print(f"- {bilingual('Images (rows)', '画像件数')}: {summary['records']:,}")
+    print(f"- {bilingual('Unique subjects', 'ユニーク被写体数')}: {summary['subjects']:,}")
+    print(f"- {bilingual('Primary hero shots', '主画像件数')}: {summary['primary_count']:,}")
 
     if summary["height"] and summary["width"]:
         height = summary["height"]
         width = summary["width"]
         print(
-            f"- Image resolution (HxW): "
+            f"- {bilingual('Image resolution (HxW)', '画像解像度 (縦×横)')}: "
             f"min {height['min']:.0f}x{width['min']:.0f}, "
             f"avg {height['avg']:.0f}x{width['avg']:.0f}, "
             f"max {height['max']:.0f}x{width['max']:.0f}"
@@ -346,52 +376,56 @@ def render_metadata_summary(summary: dict, top_n: int) -> None:
     if summary["age"]:
         age = summary["age"]
         print(
-            f"- Age range: min {age['min']:.1f}, avg {age['avg']:.1f}, max {age['max']:.1f}"
+            f"- {bilingual('Age range', '年齢範囲')}: "
+            f"min {age['min']:.1f}, avg {age['avg']:.1f}, max {age['max']:.1f}"
         )
     if summary["age_buckets"]:
-        bucket_line = ", ".join(
-            f"{label}: {count} ({count/summary['records']:.1%})"
-            for label, count in summary["age_buckets"].most_common()
-        )
-        print(f"- Age buckets: {bucket_line}")
+        print(f"- {bilingual('Age buckets', '年齢帯分布')}:")
+        for label, count in summary["age_buckets"].most_common():
+            print(
+                f"  - {label}: {count} ({format_pct(count, summary['records'])})"
+            )
 
-    print("\n### Camera manufacturers/models")
+    print("\n### " + bilingual("Camera manufacturers/models", "カメラメーカー／モデル"))
     for model, count in summary["camera_models"].most_common(top_n):
-        pct = (count / summary["records"]) if summary["records"] else 0
-        print(f"- {model}: {count} images ({pct:.1%})")
+        print(f"- {model}: {count} ({format_pct(count, summary['records'])})")
 
-    print("\n### Attribute label coverage")
+    print("\n### " + bilingual("Attribute label coverage", "属性ラベル分布"))
     attributes = summary["attributes"]
     for field in ATTRIBUTE_FIELDS:
         counter = attributes[field.column]
         total = sum(counter.values())
         if not total:
-            print(f"- {field.title}: no annotations.")
+            print(f"- {field.title_bilingual}: no annotations / データなし")
             continue
-        print(f"- {field.title} ({len(counter)} unique labels, {total} tags)")
+        print(
+            f"- {field.title_bilingual} "
+            f"({len(counter)} unique, {total} tags)"
+        )
         for label, count in counter.most_common(top_n):
-            pct = (count / summary["records"]) if summary["records"] else 0
-            print(f"  - {label}: {count} ({pct:.1%})")
+            print(
+                f"  - {label}: {count} ({format_pct(count, summary['records'])})"
+            )
 
 
 def render_annotator_summary(title: str, summary: dict, top_n: int) -> None:
     """アノテータ統計を箇条書きで出力する。"""
     print(f"\n## {title} ({summary['path'].name})")
-    print(f"- Annotators: {summary['rows']}")
+    print(f"- {bilingual('Annotators', 'アノテータ数')}: {summary['rows']}")
     if summary["ages"]:
         age = summary["ages"]
         print(
-            f"- Age stats: min {age['min']:.1f}, avg {age['avg']:.1f}, max {age['max']:.1f}"
+            f"- {bilingual('Age stats', '年齢統計')}: "
+            f"min {age['min']:.1f}, avg {age['avg']:.1f}, max {age['max']:.1f}"
         )
     if summary["age_buckets"]:
-        bucket_line = ", ".join(
-            f"{label}: {count}" for label, count in summary["age_buckets"].most_common()
-        )
-        print(f"- Age buckets: {bucket_line}")
-    print("- Pronouns:")
+        print(f"- {bilingual('Age buckets', '年齢帯')}:")
+        for label, count in summary["age_buckets"].most_common():
+            print(f"  - {label}: {count}")
+    print(f"- {bilingual('Pronouns', '代名詞')}:")
     for label, count in summary["pronoun"].most_common(top_n):
         print(f"  - {label}: {count}")
-    print("- Ancestry:")
+    print(f"- {bilingual('Ancestry', '祖先カテゴリ')}:")
     for label, count in summary["ancestry"].most_common(top_n):
         print(f"  - {label}: {count}")
 
@@ -419,14 +453,14 @@ def main() -> None:
             if candidate.exists():
                 annotator_summaries.append(summarize_annotator_table(candidate))
 
-    print("# FHIBE downsampled dataset report")
+    print("# " + bilingual("FHIBE downsampled dataset report", "FHIBEダウンサンプル版レポート"))
     render_directory_summary(directory_summaries)
     render_metadata_summary(metadata_summary, args.top_n)
     for summary in annotator_summaries:
         title = (
-            "QA annotator demographics"
+            bilingual("QA annotator demographics", "QAアノテータ属性")
             if summary["path"].name.startswith("QA")
-            else "Annotator demographics"
+            else bilingual("Annotator demographics", "アノテータ属性")
         )
         render_annotator_summary(title, summary, args.top_n)
 
