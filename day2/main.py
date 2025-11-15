@@ -38,6 +38,8 @@ DEFAULT_FOCUS_DIRS = [
     "results",
 ]
 
+IGNORE_BASENAMES = {".DS_Store"}
+
 console = Console(highlight=False, soft_wrap=True) if Console else None
 USE_RICH = console is not None and Table is not None
 
@@ -209,6 +211,8 @@ def describe_directory(dataset_root: Path, absolute: Path, max_samples: int) -> 
     file_count = 0
     dir_count = 0
     for entry in entries:
+        if entry.name in IGNORE_BASENAMES:
+            continue
         if entry.is_dir():
             dir_count += 1
             if len(sample_dirs) < max_samples:
