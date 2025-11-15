@@ -12,6 +12,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
 
+try:
+    from rich.console import Console
+    from rich.table import Table
+except ImportError:
+    Console = None
+    Table = None
+
+try:
+    from tabulate import tabulate
+except ImportError:
+    tabulate = None
+
 
 DEFAULT_FOCUS_DIRS = [
     "data",
@@ -25,6 +37,9 @@ DEFAULT_FOCUS_DIRS = [
     "data/protocol",
     "results",
 ]
+
+console = Console(highlight=False, soft_wrap=True) if Console else None
+USE_RICH = console is not None and Table is not None
 
 
 @dataclass(frozen=True)
@@ -49,6 +64,41 @@ def format_pct(count: int, total: int) -> str:
     if total <= 0:
         return "0.0%"
     return f"{(count / total) * 100:.1f}%"
+
+
+def make_table(title: str, columns: Sequence[str]) -> Table:
+    """指定タイトルと列でRichテーブルを生成する。"""
+    if not USE_RICH or Table is None:
+        raise RuntimeError("Rich tables are unavailable.")
+    table = Table(title=title, header_style="bold cyan")
+    for column in columns:
+        table.add_column(column)
+    return table
+
+
+def format_list(items: Sequence[str]) -> str:
+    """代表リストを折り返し表示しやすい文字列に変換する。"""
+    return "\n".join(items) if items else "-"
+
+
+def append_markdown_table(
+    markdown_sections: list[str] | None, title: str, headers: Sequence[str], rows: list[Sequence[str]]
+) -> None:
+    """tabulateでMarkdownテーブルを生成してセクションに追加する。"""
+    if markdown_sections is None or tabulate is None:
+        return
+    markdown_sections.append(
+        f"### {title}\n" + tabulate(rows, headers=headers, tablefmt="github")
+    )
+
+
+def print_rule(title: str) -> None:
+    """Richの罫線 or フォールバックを出力する。"""
+    if USE_RICH and console is not None:
+        console.rule(title)
+    else:
+        print("\n" + title)
+        print("-" * len(title))
 
 
 ATTRIBUTE_FIELDS: Sequence[AttributeField] = (
@@ -117,6 +167,11 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=5,
         help="Number of top values to show for attribute/camera distributions.",
+    )
+    parser.add_argument(
+        "--markdown",
+        action="store_true",
+        help="Also print GitHub-flavored Markdown tables (requires tabulate).",
     )
     return parser.parse_args()
 
@@ -337,97 +392,295 @@ def summarize_annotator_table(csv_path: Path) -> dict:
     }
 
 
-def render_directory_summary(dir_summaries: Iterable[dict]) -> None:
-    """ディレクトリ構成をMarkdown形式で出力する。"""
-    print("## " + bilingual("Directory overview", "ディレクトリ概要"))
-    for summary in dir_summaries:
-        print(f"- {summary['path']}")
-        print(
-            f"  - {bilingual('Counts', '件数')}: {summary['dirs']} dirs / {summary['files']} files"
+def render_directory_summary(
+    dir_summaries: Iterable[dict], markdown_sections: list[str] | None
+) -> None:
+    """ディレクトリ構成をRichテーブルとMarkdownで出力する。"""
+    title = bilingual("Directory overview", "ディレクトリ概要")
+    markdown_rows: list[list[str]] = []
+    if USE_RICH:
+        table = make_table(
+            title,
+            [
+                bilingual("Path", "パス"),
+                bilingual("Dirs/Files", "ディレクトリ/ファイル数"),
+                bilingual("Sample dirs", "代表ディレクトリ"),
+                bilingual("Sample files", "代表ファイル"),
+            ],
         )
-        if summary["sample_dirs"]:
-            print(
-                f"  - {bilingual('Sample dirs', '代表ディレクトリ')}: "
-                + ", ".join(summary["sample_dirs"])
-            )
-        if summary["sample_files"]:
-            print(
-                f"  - {bilingual('Sample files', '代表ファイル')}: "
-                + ", ".join(summary["sample_files"])
-            )
+    else:
+        print_rule(title)
+    for summary in dir_summaries:
+        dir_counts = f"{summary['dirs']} / {summary['files']}"
+        sample_dirs = format_list(summary["sample_dirs"])
+        sample_files = format_list(summary["sample_files"])
+        if USE_RICH:
+            table.add_row(summary["path"], dir_counts, sample_dirs, sample_files)
+        else:
+            print(f"- {summary['path']}")
+            print(f"  - {bilingual('Dirs/Files', '件数')}: {dir_counts}")
+            if sample_dirs != "-":
+                print(f"  - {bilingual('Sample dirs', '代表ディレクトリ')}: {sample_dirs}")
+            if sample_files != "-":
+                print(f"  - {bilingual('Sample files', '代表ファイル')}: {sample_files}")
+        markdown_rows.append(
+            [summary["path"], dir_counts, sample_dirs.replace("\n", ", "), sample_files.replace("\n", ", ")]
+        )
+    if USE_RICH:
+        console.print(table)
+    append_markdown_table(
+        markdown_sections,
+        title,
+        [
+            bilingual("Path", "パス"),
+            bilingual("Dirs/Files", "ディレクトリ/ファイル数"),
+            bilingual("Sample dirs", "代表ディレクトリ"),
+            bilingual("Sample files", "代表ファイル"),
+        ],
+        markdown_rows,
+    )
 
 
-def render_metadata_summary(summary: dict, top_n: int) -> None:
-    """データセット全体の統計・属性別分布をMarkdownで出力する。"""
-    print("\n## " + bilingual("Metadata (fhibe_downsampled.csv)", "メタデータ概要"))
-    print(f"- {bilingual('Images (rows)', '画像件数')}: {summary['records']:,}")
-    print(f"- {bilingual('Unique subjects', 'ユニーク被写体数')}: {summary['subjects']:,}")
-    print(f"- {bilingual('Primary hero shots', '主画像件数')}: {summary['primary_count']:,}")
+def render_metadata_summary(
+    summary: dict, top_n: int, markdown_sections: list[str] | None
+) -> None:
+    """データセット全体の統計・属性別分布をRichテーブルで出力する。"""
+    section_title = bilingual("Metadata (fhibe_downsampled.csv)", "メタデータ概要")
+    print_rule(section_title)
 
+    stats_headers = [bilingual("Metric", "指標"), bilingual("Value", "値")]
+    stats_rows: list[list[str]] = [
+        [bilingual("Images (rows)", "画像件数"), f"{summary['records']:,}"],
+        [bilingual("Unique subjects", "ユニーク被写体数"), f"{summary['subjects']:,}"],
+        [bilingual("Primary hero shots", "主画像件数"), f"{summary['primary_count']:,}"],
+    ]
     if summary["height"] and summary["width"]:
         height = summary["height"]
         width = summary["width"]
-        print(
-            f"- {bilingual('Image resolution (HxW)', '画像解像度 (縦×横)')}: "
-            f"min {height['min']:.0f}x{width['min']:.0f}, "
-            f"avg {height['avg']:.0f}x{width['avg']:.0f}, "
-            f"max {height['max']:.0f}x{width['max']:.0f}"
+        stats_rows.append(
+            [
+                bilingual("Image resolution (HxW)", "画像解像度 (縦×横)"),
+                f"min {height['min']:.0f}x{width['min']:.0f}, "
+                f"avg {height['avg']:.0f}x{width['avg']:.0f}, "
+                f"max {height['max']:.0f}x{width['max']:.0f}",
+            ]
         )
     if summary["age"]:
         age = summary["age"]
-        print(
-            f"- {bilingual('Age range', '年齢範囲')}: "
-            f"min {age['min']:.1f}, avg {age['avg']:.1f}, max {age['max']:.1f}"
+        stats_rows.append(
+            [
+                bilingual("Age range", "年齢範囲"),
+                f"min {age['min']:.1f}, avg {age['avg']:.1f}, max {age['max']:.1f}",
+            ]
         )
+    if USE_RICH:
+        stats_table = make_table(section_title + " - " + bilingual("Core stats", "基本統計"), stats_headers)
+        for metric, value in stats_rows:
+            stats_table.add_row(metric, value)
+        console.print(stats_table)
+    else:
+        for metric, value in stats_rows:
+            print(f"- {metric}: {value}")
+    append_markdown_table(markdown_sections, section_title, stats_headers, stats_rows)
+
     if summary["age_buckets"]:
-        print(f"- {bilingual('Age buckets', '年齢帯分布')}:")
+        age_title = bilingual("Age buckets", "年齢帯分布")
+        age_headers = [
+            bilingual("Bucket", "年齢帯"),
+            bilingual("Count", "件数"),
+            bilingual("Share", "構成比"),
+        ]
+        age_rows = []
+        if USE_RICH:
+            age_table = make_table(age_title, age_headers)
+        else:
+            print(f"\n{age_title}:")
         for label, count in summary["age_buckets"].most_common():
-            print(
-                f"  - {label}: {count} ({format_pct(count, summary['records'])})"
-            )
+            share = format_pct(count, summary["records"])
+            if USE_RICH:
+                age_table.add_row(label, str(count), share)
+            else:
+                print(f"  - {label}: {count} ({share})")
+            age_rows.append([label, str(count), share])
+        if USE_RICH:
+            console.print(age_table)
+        append_markdown_table(
+            markdown_sections,
+            age_title,
+            age_headers,
+            age_rows,
+        )
 
-    print("\n### " + bilingual("Camera manufacturers/models", "カメラメーカー／モデル"))
+    camera_title = bilingual("Camera manufacturers/models", "カメラメーカー／モデル")
+    camera_headers = [
+        bilingual("Model", "機種"),
+        bilingual("Images", "件数"),
+        bilingual("Share", "構成比"),
+    ]
+    if USE_RICH:
+        camera_table = make_table(camera_title, camera_headers)
+    else:
+        print(f"\n{camera_title}:")
+    camera_rows = []
     for model, count in summary["camera_models"].most_common(top_n):
-        print(f"- {model}: {count} ({format_pct(count, summary['records'])})")
+        share = format_pct(count, summary["records"])
+        if USE_RICH:
+            camera_table.add_row(model, str(count), share)
+        else:
+            print(f"- {model}: {count} ({share})")
+        camera_rows.append([model, str(count), share])
+    if USE_RICH:
+        console.print(camera_table)
+    append_markdown_table(
+        markdown_sections,
+        camera_title,
+        camera_headers,
+        camera_rows,
+    )
 
-    print("\n### " + bilingual("Attribute label coverage", "属性ラベル分布"))
     attributes = summary["attributes"]
     for field in ATTRIBUTE_FIELDS:
         counter = attributes[field.column]
         total = sum(counter.values())
         if not total:
-            print(f"- {field.title_bilingual}: no annotations / データなし")
+            message = f"{field.title_bilingual}: no annotations / データなし"
+            if USE_RICH and console is not None:
+                console.print(f"[yellow]{message}[/yellow]")
+            else:
+                print(message)
             continue
-        print(
-            f"- {field.title_bilingual} "
-            f"({len(counter)} unique, {total} tags)"
-        )
+        attr_headers = [
+            bilingual("Label", "ラベル"),
+            bilingual("Count", "件数"),
+            bilingual("Share", "構成比"),
+        ]
+        if USE_RICH:
+            attr_table = make_table(field.title_bilingual, attr_headers)
+        else:
+            print(f"\n{field.title_bilingual}:")
+        attr_rows = []
         for label, count in counter.most_common(top_n):
-            print(
-                f"  - {label}: {count} ({format_pct(count, summary['records'])})"
-            )
+            share = format_pct(count, summary["records"])
+            if USE_RICH:
+                attr_table.add_row(label, str(count), share)
+            else:
+                print(f"  - {label}: {count} ({share})")
+            attr_rows.append([label, str(count), share])
+        if USE_RICH:
+            console.print(attr_table)
+        append_markdown_table(
+            markdown_sections,
+            field.title_bilingual,
+            attr_headers,
+            attr_rows,
+        )
 
 
-def render_annotator_summary(title: str, summary: dict, top_n: int) -> None:
-    """アノテータ統計を箇条書きで出力する。"""
-    print(f"\n## {title} ({summary['path'].name})")
-    print(f"- {bilingual('Annotators', 'アノテータ数')}: {summary['rows']}")
+def render_annotator_summary(
+    title: str, summary: dict, top_n: int, markdown_sections: list[str] | None
+) -> None:
+    """アノテータ統計を表形式で出力する。"""
+    section_title = f"{title} ({summary['path'].name})"
+    print_rule(section_title)
+
+    info_headers = [bilingual("Metric", "指標"), bilingual("Value", "値")]
+    info_rows = [[bilingual("Annotators", "アノテータ数"), str(summary["rows"])]]
     if summary["ages"]:
         age = summary["ages"]
-        print(
-            f"- {bilingual('Age stats', '年齢統計')}: "
-            f"min {age['min']:.1f}, avg {age['avg']:.1f}, max {age['max']:.1f}"
+        info_rows.append(
+            [
+                bilingual("Age stats", "年齢統計"),
+                f"min {age['min']:.1f}, avg {age['avg']:.1f}, max {age['max']:.1f}",
+            ]
         )
+    if USE_RICH:
+        info_table = make_table(section_title + " - Info", info_headers)
+        for metric, value in info_rows:
+            info_table.add_row(metric, value)
+        console.print(info_table)
+    else:
+        for metric, value in info_rows:
+            print(f"- {metric}: {value}")
+    append_markdown_table(markdown_sections, section_title + " - Info", info_headers, info_rows)
+
     if summary["age_buckets"]:
-        print(f"- {bilingual('Age buckets', '年齢帯')}:")
+        bucket_headers = [
+            bilingual("Bucket", "年齢帯"),
+            bilingual("Count", "件数"),
+        ]
+        bucket_rows = []
+        if USE_RICH:
+            bucket_table = make_table(
+                section_title + " - " + bilingual("Age buckets", "年齢帯"), bucket_headers
+            )
+        else:
+            print(f"\n{bilingual('Age buckets', '年齢帯')}:")
         for label, count in summary["age_buckets"].most_common():
-            print(f"  - {label}: {count}")
-    print(f"- {bilingual('Pronouns', '代名詞')}:")
+            if USE_RICH:
+                bucket_table.add_row(label, str(count))
+            else:
+                print(f"  - {label}: {count}")
+            bucket_rows.append([label, str(count)])
+        if USE_RICH:
+            console.print(bucket_table)
+        append_markdown_table(
+            markdown_sections,
+            section_title + " - " + bilingual("Age buckets", "年齢帯"),
+            bucket_headers,
+            bucket_rows,
+        )
+
+    pronoun_headers = [
+        bilingual("Pronouns", "代名詞"),
+        bilingual("Count", "件数"),
+    ]
+    if USE_RICH:
+        pronoun_table = make_table(
+            section_title + " - " + bilingual("Pronouns", "代名詞"), pronoun_headers
+        )
+    else:
+        print(f"\n{bilingual('Pronouns', '代名詞')}:")
+    pronoun_rows = []
     for label, count in summary["pronoun"].most_common(top_n):
-        print(f"  - {label}: {count}")
-    print(f"- {bilingual('Ancestry', '祖先カテゴリ')}:")
+        if USE_RICH:
+            pronoun_table.add_row(label, str(count))
+        else:
+            print(f"  - {label}: {count}")
+        pronoun_rows.append([label, str(count)])
+    if USE_RICH:
+        console.print(pronoun_table)
+    append_markdown_table(
+        markdown_sections,
+        section_title + " - " + bilingual("Pronouns", "代名詞"),
+        pronoun_headers,
+        pronoun_rows,
+    )
+
+    ancestry_headers = [
+        bilingual("Ancestry", "祖先カテゴリ"),
+        bilingual("Count", "件数"),
+    ]
+    if USE_RICH:
+        ancestry_table = make_table(
+            section_title + " - " + bilingual("Ancestry", "祖先カテゴリ"), ancestry_headers
+        )
+    else:
+        print(f"\n{bilingual('Ancestry', '祖先カテゴリ')}:")
+    ancestry_rows = []
     for label, count in summary["ancestry"].most_common(top_n):
-        print(f"  - {label}: {count}")
+        if USE_RICH:
+            ancestry_table.add_row(label, str(count))
+        else:
+            print(f"  - {label}: {count}")
+        ancestry_rows.append([label, str(count)])
+    if USE_RICH:
+        console.print(ancestry_table)
+    append_markdown_table(
+        markdown_sections,
+        section_title + " - " + bilingual("Ancestry", "祖先カテゴリ"),
+        ancestry_headers,
+        ancestry_rows,
+    )
 
 
 def main() -> None:
@@ -435,6 +688,11 @@ def main() -> None:
     args = parse_args()
     dataset_root = resolve_dataset_root(args.dataset_root)
     focus_dirs = args.focus_dirs or DEFAULT_FOCUS_DIRS
+    if args.markdown and tabulate is None:
+        raise SystemExit(
+            "Markdownテーブル出力には tabulate が必要です。`pip install tabulate` を実行してください。"
+        )
+    markdown_sections: list[str] | None = [] if args.markdown else None
 
     metadata_csv = (
         dataset_root / "data" / "processed" / "fhibe_downsampled" / "fhibe_downsampled.csv"
@@ -453,16 +711,22 @@ def main() -> None:
             if candidate.exists():
                 annotator_summaries.append(summarize_annotator_table(candidate))
 
-    print("# " + bilingual("FHIBE downsampled dataset report", "FHIBEダウンサンプル版レポート"))
-    render_directory_summary(directory_summaries)
-    render_metadata_summary(metadata_summary, args.top_n)
+    print_rule("# " + bilingual("FHIBE downsampled dataset report", "FHIBEダウンサンプル版レポート"))
+    render_directory_summary(directory_summaries, markdown_sections)
+    render_metadata_summary(metadata_summary, args.top_n, markdown_sections)
     for summary in annotator_summaries:
         title = (
             bilingual("QA annotator demographics", "QAアノテータ属性")
             if summary["path"].name.startswith("QA")
             else bilingual("Annotator demographics", "アノテータ属性")
         )
-        render_annotator_summary(title, summary, args.top_n)
+        render_annotator_summary(title, summary, args.top_n, markdown_sections)
+
+    if markdown_sections:
+        print_rule("Markdown tables (copy & paste)")
+        for block in markdown_sections:
+            print(block)
+            print()
 
 
 if __name__ == "__main__":
