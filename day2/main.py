@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""FHIBEデータセットのディレクトリ構造と注釈統計を可視化するCLIレポーター。"""
+
 import argparse
 import ast
 import csv
@@ -62,6 +64,7 @@ AGE_BUCKETS = [
 
 
 def parse_args() -> argparse.Namespace:
+    """CLIで受け取るパラメータを定義する。"""
     parser = argparse.ArgumentParser(
         description=(
             "Summarize the FHIBE downsampled dataset structure, metadata and attribute labels.\n"
@@ -96,6 +99,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def resolve_dataset_root(raw_path: Path | None) -> Path:
+    """指定パスを展開し、存在確認まで行う。"""
     if raw_path is None:
         raise SystemExit(
             "Dataset path is not set. Provide --dataset-root or export FHIBE_DATA_DIR."
@@ -109,6 +113,7 @@ def resolve_dataset_root(raw_path: Path | None) -> Path:
 def describe_directories(
     dataset_root: Path, focus_dirs: Sequence[str], max_samples: int
 ) -> list[dict]:
+    """注目ディレクトリごとの件数やサンプルをまとめる。"""
     summaries: list[dict] = []
     for rel_path in focus_dirs:
         absolute = dataset_root / rel_path
@@ -119,6 +124,7 @@ def describe_directories(
 
 
 def describe_directory(dataset_root: Path, absolute: Path, max_samples: int) -> dict:
+    """単一ディレクトリ内のファイル／フォルダ数と代表例を返す。"""
     entries = sorted(absolute.iterdir(), key=lambda path: path.name)
     sample_files: list[str] = []
     sample_dirs: list[str] = []
@@ -144,6 +150,7 @@ def describe_directory(dataset_root: Path, absolute: Path, max_samples: int) -> 
 
 
 class NumericStats:
+    """数値列の最小・最大・平均を逐次更新で保持する。"""
     def __init__(self) -> None:
         self.count = 0
         self._min: float | None = None
@@ -171,6 +178,7 @@ class NumericStats:
 
 
 def summarize_metadata(metadata_csv: Path) -> dict:
+    """画像メタ情報、カメラ、属性ラベル、年齢の統計を集計する。"""
     attribute_counters: dict[str, Counter[str]] = {f.column: Counter() for f in ATTRIBUTE_FIELDS}
     camera_models: Counter[str] = Counter()
     subject_ids: set[str] = set()
@@ -243,6 +251,7 @@ def parse_float(value: str | None) -> float | None:
 
 
 def normalize_attribute(raw_value: str | None, treat_as_list: bool) -> list[str]:
+    """CSV内表現にかかわらずラベル文字列のリストに正規化する。"""
     if raw_value is None:
         return []
     value = raw_value.strip()
@@ -268,6 +277,7 @@ def bucketize_age(age: float) -> str:
 
 
 def summarize_annotator_table(csv_path: Path) -> dict:
+    """アノテータ属性CSVの件数・年齢帯・Pronoun/Ancestry頻度を集計する。"""
     prefix = "QAannotator" if csv_path.name.startswith("QA") else "annotator"
     age_column = f"{prefix}_age"
     pronoun_column = f"{prefix}_pronoun"
@@ -305,6 +315,7 @@ def summarize_annotator_table(csv_path: Path) -> dict:
 
 
 def render_directory_summary(dir_summaries: Iterable[dict]) -> None:
+    """ディレクトリ構成をMarkdown形式で出力する。"""
     print("## Directory overview")
     for summary in dir_summaries:
         print(
@@ -317,6 +328,7 @@ def render_directory_summary(dir_summaries: Iterable[dict]) -> None:
 
 
 def render_metadata_summary(summary: dict, top_n: int) -> None:
+    """データセット全体の統計・属性別分布をMarkdownで出力する。"""
     print("\n## Metadata (fhibe_downsampled.csv)")
     print(f"- Images (rows): {summary['records']:,}")
     print(f"- Unique subjects: {summary['subjects']:,}")
@@ -363,6 +375,7 @@ def render_metadata_summary(summary: dict, top_n: int) -> None:
 
 
 def render_annotator_summary(title: str, summary: dict, top_n: int) -> None:
+    """アノテータ統計を箇条書きで出力する。"""
     print(f"\n## {title} ({summary['path'].name})")
     print(f"- Annotators: {summary['rows']}")
     if summary["ages"]:
@@ -384,6 +397,7 @@ def render_annotator_summary(title: str, summary: dict, top_n: int) -> None:
 
 
 def main() -> None:
+    """CLI→集計→Markdown描画の実行フローを束ねるエントリーポイント。"""
     args = parse_args()
     dataset_root = resolve_dataset_root(args.dataset_root)
     focus_dirs = args.focus_dirs or DEFAULT_FOCUS_DIRS
