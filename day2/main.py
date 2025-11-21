@@ -24,6 +24,11 @@ try:
 except ImportError:
     tabulate = None
 
+try:
+    import matplotlib.pyplot as plt
+except ImportError:
+    plt = None
+
 
 DEFAULT_FOCUS_DIRS = [
     "data",
@@ -103,6 +108,26 @@ def print_rule(title: str) -> None:
         print("-" * len(title))
 
 
+def slugify(text: str) -> str:
+    """グラフ保存用の簡易スラグを生成する。"""
+    return "".join(ch.lower() if ch.isalnum() else "_" for ch in text).strip("_")
+
+
+def save_bar_chart(labels: list[str], values: list[float], title: str, xlabel: str, ylabel: str, path: Path) -> None:
+    """matplotlibで棒グラフを保存する。"""
+    if plt is None:
+        raise RuntimeError("matplotlib backend is unavailable.")
+    plt.figure(figsize=(8, 5))
+    plt.bar(labels, values, color="#2E86AB")
+    plt.title(title)
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.xticks(rotation=30, ha="right")
+    plt.tight_layout()
+    plt.savefig(path)
+    plt.close()
+
+
 ATTRIBUTE_FIELDS: Sequence[AttributeField] = (
     AttributeField("pronoun", "Self-identified pronoun(s)", "自己申告の代名詞", True),
     AttributeField("ancestry", "Ancestry bucket(s)", "祖先カテゴリ", True),
@@ -174,6 +199,11 @@ def parse_args() -> argparse.Namespace:
         "--markdown",
         action="store_true",
         help="Also print GitHub-flavored Markdown tables (requires tabulate).",
+    )
+    parser.add_argument(
+        "--plot-dir",
+        type=Path,
+        help="If set, save bar charts (requires matplotlib) to this directory.",
     )
     return parser.parse_args()
 
@@ -687,6 +717,87 @@ def render_annotator_summary(
     )
 
 
+def generate_plots(
+    metadata_summary: dict,
+    annotator_summaries: list[dict],
+    top_n: int,
+    plot_dir: Path,
+) -> None:
+    """必要なグラフを生成してファイルに保存する。"""
+    if plt is None:
+        raise SystemExit("グラフ描画には matplotlib が必要です。`pip install matplotlib` を実行してください。")
+    plot_dir = plot_dir.expanduser()
+    plot_dir.mkdir(parents=True, exist_ok=True)
+
+    def plot_counter(counter: Counter, title: str, xlabel: str, ylabel: str, filename: str) -> None:
+        if not counter:
+            return
+        items = counter.most_common(top_n)
+        labels = [label for label, _ in items]
+        values = [value for _, value in items]
+        save_bar_chart(labels, values, title, xlabel, ylabel, plot_dir / filename)
+
+    age_buckets: Counter = metadata_summary["age_buckets"]
+    if age_buckets:
+        plot_counter(
+            age_buckets,
+            bilingual("Age distribution", "年齢帯分布"),
+            bilingual("Age bucket", "年齢帯"),
+            bilingual("Images", "画像数"),
+            "age_distribution.png",
+        )
+
+    camera_items = metadata_summary["camera_models"].most_common(top_n)
+    if camera_items:
+        labels = [label for label, _ in camera_items]
+        values = [value for _, value in camera_items]
+        save_bar_chart(
+            labels,
+            values,
+            bilingual("Top camera models", "カメラ機種上位"),
+            bilingual("Model", "機種"),
+            bilingual("Images", "画像数"),
+            plot_dir / f"camera_top_{top_n}.png",
+        )
+
+    attributes = metadata_summary["attributes"]
+    attr_specs = [
+        ("pronoun", bilingual("Pronoun distribution", "代名詞分布")),
+        ("ancestry", bilingual("Ancestry distribution", "祖先カテゴリ分布")),
+    ]
+    for key, title in attr_specs:
+        counter = attributes.get(key, Counter())
+        if counter:
+            plot_counter(
+                counter,
+                title,
+                bilingual("Label", "ラベル"),
+                bilingual("Count", "件数"),
+                f"{slugify(key)}_distribution.png",
+            )
+
+    for annotator in annotator_summaries:
+        prefix = "qa_" if annotator["path"].name.startswith("QA") else "annotator_"
+        pron_counter = annotator["pronoun"]
+        if pron_counter:
+            plot_counter(
+                pron_counter,
+                bilingual("Annotator pronouns", "アノテータ代名詞") + f" ({annotator['path'].name})",
+                bilingual("Pronoun", "代名詞"),
+                bilingual("Annotators", "アノテータ数"),
+                f"{prefix}pronouns.png",
+            )
+        ancestry_counter = annotator["ancestry"]
+        if ancestry_counter:
+            plot_counter(
+                ancestry_counter,
+                bilingual("Annotator ancestry", "アノテータ祖先カテゴリ") + f" ({annotator['path'].name})",
+                bilingual("Ancestry", "祖先カテゴリ"),
+                bilingual("Annotators", "アノテータ数"),
+                f"{prefix}ancestry.png",
+            )
+
+
 def main() -> None:
     """CLI→集計→Markdown描画の実行フローを束ねるエントリーポイント。"""
     args = parse_args()
@@ -697,6 +808,7 @@ def main() -> None:
             "Markdownテーブル出力には tabulate が必要です。`pip install tabulate` を実行してください。"
         )
     markdown_sections: list[str] | None = [] if args.markdown else None
+    plot_dir = args.plot_dir
 
     metadata_csv = (
         dataset_root / "data" / "processed" / "fhibe_downsampled" / "fhibe_downsampled.csv"
@@ -725,6 +837,9 @@ def main() -> None:
             else bilingual("Annotator demographics", "アノテータ属性")
         )
         render_annotator_summary(title, summary, args.top_n, markdown_sections)
+
+    if plot_dir:
+        generate_plots(metadata_summary, annotator_summaries, args.top_n, plot_dir)
 
     if markdown_sections:
         print_rule("Markdown tables (copy & paste)")

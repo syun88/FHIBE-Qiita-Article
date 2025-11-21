@@ -6,9 +6,6 @@ Day 1〜25 までの執筆ネタを整理しつつ、データセット分析コ
 ## 連載テーマ（抜粋）
 - Day 1: FHIBE データセットとは？　記事未公開
 - Day 2: データ構造とメタデータの完全解剖　記事未公開
-- Day 3: 利用規約・倫理実務　記事未公開
-- …
-- Day 25: 総括・コード公開　記事未公開
 
 
 ## リポジトリ構成
@@ -26,7 +23,7 @@ FHIBE-Qiita-Article/
 - Python 3.10 以降（標準ライブラリのみで動作）
 - FHIBE データセット展開済みディレクトリ  
   例: `/Volumes/data/SONY_AI/fhibe.20250716.u.gT5_rFTA_downsampled_public`
-- 依存パッケージ: [rich](https://github.com/Textualize/rich), [tabulate](https://github.com/astanin/python-tabulate)  
+- 依存パッケージ: [rich](https://github.com/Textualize/rich), [tabulate](https://github.com/astanin/python-tabulate), [matplotlib](https://matplotlib.org/)  
   インストール例: `python3 -m pip install -r requirements.txt`
 
 ## Day2 スクリプトの使い方
@@ -49,6 +46,9 @@ python3 day2/main.py
 
 # Markdownテーブルを併せて表示（Qiita貼り付け用）
 python3 day2/main.py --markdown
+
+# 可視化PNGを生成（matplotlib使用）
+python3 day2/main.py --plot-dir ./plots
 ```
 
 主な出力内容:
@@ -56,7 +56,8 @@ python3 day2/main.py --markdown
 2. `fhibe_downsampled.csv` に基づく統計（件数、解像度、年齢帯、カメラ機種、Pronoun・Ancestry 等）
 3. `annotator_demographics.csv` と `QAannotator_demographics.csv` の属性統計
 
-`rich` によるカラー付きテーブルと `tabulate` による GitHub Flavored Markdown (オプション `--markdown`) を併用することで、ターミナル表示と Qiita 貼り付けの両方が整った形で得られます。
+`rich` によるカラー付きテーブルと `tabulate` による GitHub Flavored Markdown (オプション `--markdown`) を併用することで、ターミナル表示と Qiita 貼り付けの両方が整った形で得られます。  
+さらに `--plot-dir` を指定すると、年齢帯分布／カメラ機種上位／代名詞・祖先カテゴリなどの棒グラフを PNG で出力でき、そのまま記事に貼ることができます。
 
 ### Day2 CLI 引数
 - `--dataset-root`: FHIBE データセットを展開したルートディレクトリ。未指定時は `FHIBE_DATA_DIR` を参照します。
